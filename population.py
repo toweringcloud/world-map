@@ -8,16 +8,27 @@ st.set_page_config(layout="wide")
 st.title("World Population Map")
 
 
-# CSV 데이터 로드
+# 국가별 인구(수) 데이터 로드
 @st.cache_data
 def load_population_data():
-    df = pd.read_csv("data/population.csv")  # 인구 데이터 로드
+    df = pd.read_csv("data/countries_by_population.csv")
     df = df.sort_values(by="population", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1  # 순위 추가
     return df
 
 
 population_df = load_population_data()
+
+
+# 국가별 영토(land+water) 데이터 추가
+@st.cache_data
+def load_area_data():
+    df = pd.read_csv("data/countries_by_area.csv")
+    df = df.sort_values(by="area", ascending=False).reset_index(drop=True)
+    return df
+
+
+area_df = load_area_data()
 
 
 # GeoPandas 세계 지도 데이터 로드
@@ -31,44 +42,79 @@ def load_world_data():
 world = load_world_data()
 print(world.columns)
 
-# 데이터 병합 (국가별 인구 추가)
+# 데이터 병합 (인구 & 면적 추가)
 world = world.merge(population_df, left_on="NAME", right_on="country", how="left")
-world["population"] = world["population"].fillna(0)
+world = world.merge(area_df, left_on="NAME", right_on="country", how="left")
 
-# 슬라이더 추가 (사용자가 인구 필터링)
-min_pop, max_pop = st.slider(
-    "Filter by Population",
-    min_value=int(world["population"].min()),
-    max_value=int(world["population"].max()),
-    value=(int(world["population"].min()), int(world["population"].max())),
+# 결측값 처리
+world["population"] = world["population"].fillna(0)
+world["area"] = world["area"].fillna(0)
+
+# 인구밀도 계산 (면적이 0이면 인구밀도도 0)
+world["population_density"] = world.apply(
+    lambda row: 0 if row["area"] == 0 else round(row["population"] / row["area"], 2),
+    axis=1,
+)
+
+# 순위 데이터 추가
+world["population_rank"] = (
+    world["population"].rank(ascending=False, method="min").astype(int)
+)
+world["population_density_rank"] = (
+    world["population_density"].rank(ascending=False, method="min").astype(int)
+)
+
+# 메뉴 추가
+option = st.radio("Select Data Type", ["Population", "Population Density"])
+
+# 슬라이더 추가 (사용자가 필터링)
+if option == "Population":
+    min_val, max_val = int(world["population"].min()), int(world["population"].max())
+else:
+    min_val, max_val = int(world["population_density"].min()), int(
+        world["population_density"].max() + 1
+    )
+
+filter_min, filter_max = st.slider(
+    f"Filter by {option}",
+    min_value=min_val,
+    max_value=max_val,
+    value=(min_val, max_val),
 )
 
 # 선택한 범위에 맞게 데이터 필터링
-filtered_world = world[
-    (world["population"] >= min_pop) & (world["population"] <= max_pop)
-]
+if option == "Population":
+    filtered_world = world[
+        (world["population"] >= filter_min) & (world["population"] <= filter_max)
+    ]
+    color_column = "population"
+else:
+    filtered_world = world[
+        (world["population_density"] >= filter_min)
+        & (world["population_density"] <= filter_max)
+    ]
+    color_column = "population_density"
+
 
 # 특정 국가 검색 기능 추가
 search_country = st.text_input("Search for a country (case-sensitive)", "")
-
 if search_country:
     filtered_world = filtered_world[
         filtered_world["NAME"].str.contains(search_country, case=True, na=False)
     ]
-
-# 국가별 인구 순위 표시
-filtered_world = filtered_world.merge(
-    population_df[["country", "rank"]], left_on="NAME", right_on="country", how="left"
-)
 
 # 지도 시각화 (인구 0이면 흰색으로 설정)
 fig = px.choropleth(
     filtered_world,
     geojson=filtered_world.geometry,
     locations=filtered_world.index,
-    color="population",
+    color=color_column,
     hover_name="NAME",
-    hover_data=["rank_y", "population"],
+    hover_data=(
+        ["population", "population_rank"]
+        if option == "Population"
+        else ["population", "population_density", "population_density_rank"]
+    ),
     projection="natural earth",
     color_continuous_scale=[
         (0, "white"),
@@ -76,7 +122,7 @@ fig = px.choropleth(
         (0.5, "orange"),
         (1, "darkred"),
     ],
-    title="World Population Map",
+    title=f"World {option} Map",
 )
 
 # 레이아웃 조정 (화면 꽉 차게)
@@ -91,7 +137,15 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # 인구 순위 테이블 표시 (Top 30)
-st.subheader("Top Population Rankings")
-st.dataframe(
-    population_df[["rank", "country", "population"]].set_index("rank").head(30)
-)
+st.subheader(f"Top {option} Rankings")
+
+if option == "Population":
+    top_df = population_df.sort_values(by="population", ascending=False).head(30)
+    top_df = top_df[["rank", "country", "population"]]
+else:
+    top_df = world[["NAME", "population_density"]].copy()
+    top_df = top_df.rename(columns={"NAME": "country"})
+    top_df = top_df.sort_values(by="population_density", ascending=False).head(30)
+    top_df.insert(0, "rank", range(1, len(top_df) + 1))  # 순위 추가
+
+st.dataframe(top_df.set_index("rank"))
