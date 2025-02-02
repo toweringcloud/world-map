@@ -11,7 +11,7 @@ st.title("World Population Map")
 # 국가별 인구(수) 데이터 로드
 @st.cache_data
 def load_population_data():
-    df = pd.read_csv("./data/countries_by_population.csv")
+    df = pd.read_csv("data/countries_by_population.csv")
     df = df.sort_values(by="population", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1  # 순위 추가
     return df
@@ -23,7 +23,7 @@ population_df = load_population_data()
 # 국가별 영토(land+water) 데이터 추가
 @st.cache_data
 def load_area_data():
-    df = pd.read_csv("./data/countries_by_area.csv")
+    df = pd.read_csv("data/countries_by_area.csv")
     df = df.sort_values(by="area", ascending=False).reset_index(drop=True)
     return df
 
@@ -35,7 +35,7 @@ area_df = load_area_data()
 # https://www.naturalearthdata.com/downloads/110m-cultural-vectors
 @st.cache_data
 def load_world_data():
-    world = gpd.read_file("./maps/110m_cultural/ne_110m_admin_0_countries.shp")
+    world = gpd.read_file("maps/110m_cultural/ne_110m_admin_0_countries.shp")
     return world
 
 
